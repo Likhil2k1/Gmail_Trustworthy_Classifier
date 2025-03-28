@@ -1,44 +1,55 @@
 import streamlit as st
-import base64
 import os
-import re
 import json
-from collections import defaultdict
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from transformers import pipeline, AutoTokenizer
+import base64
+import re
+from collections import defaultdict
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+# The credentials.json content is directly embedded as a string here
+credentials_json = '''{
+    "installed": {
+        "client_id": "145643336664-aooc6ot3tp3u2sv5cmirno9jprndgg0i.apps.googleusercontent.com",
+        "project_id": "gmailtrustappfinal",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_secret": "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",
+        "redirect_uris": ["http://localhost"]
+    }
+}'''
 
 @st.cache_resource
 def gmail_authenticate():
     creds = None
-    # Check if the token is available in the environment
-    if os.getenv('GOOGLE_CREDENTIALS_B64'):
-        decoded_credentials = base64.b64decode(os.getenv('GOOGLE_CREDENTIALS_B64')).decode('utf-8')
-        creds = Credentials.from_authorized_user_info(info=json.loads(decoded_credentials), scopes=SCOPES)
-    
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Generate the authorization URL for manual user input
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES
+            )  # Replaced file load with embedded credentials
             auth_url, _ = flow.authorization_url(prompt='consent')
-            st.write(f"Please click the link below to authorize:")
-            st.markdown(f"[Authorize Link]({auth_url})")
-            
-            # User is asked to manually enter the authorization code
-            auth_code = st.text_input("Enter the authorization code here:")
-            
-            if auth_code:
-                # Fetch the token after entering the code
-                flow.fetch_token(code=auth_code)
+
+            # Show the authentication link to the user
+            st.write("🔗 Go to this URL and authorize access:")
+            st.write(auth_url)
+            code = st.text_input("🔑 Enter the authorization code here:")
+
+            if code:
+                flow.fetch_token(code=code)
                 creds = flow.credentials
                 with open('token.json', 'w') as token:
                     token.write(creds.to_json())
+                st.success("🎉 Successfully authenticated!")
 
     return build('gmail', 'v1', credentials=creds)
 
@@ -101,7 +112,6 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 
     return sender_scores
 
-# UI Start
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
