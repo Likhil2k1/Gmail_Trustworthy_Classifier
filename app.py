@@ -9,34 +9,29 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from transformers import pipeline, AutoTokenizer
 import base64
-import json
 
 nltk.download('punkt')
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-def decode_credentials_from_base64(b64_string):
-    decoded_data = base64.b64decode(b64_string).decode('utf-8')
-    return json.loads(decoded_data)
-
 @st.cache_resource
 def gmail_authenticate():
     creds = None
-    credentials_b64 = os.getenv('CREDENTIALS_B64')
-    if credentials_b64:
-        credentials = decode_credentials_from_base64(credentials_b64)
-        creds = Credentials.from_authorized_user_info(credentials, SCOPES)
-    else:
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=8765)
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            auth_url, _ = flow.authorization_url(prompt='consent')
+            st.write(f"Please visit this URL to authorize the application: [Authorize]( {auth_url} )")
+            auth_code = st.text_input("Enter the authorization code here:")
+            if auth_code:
+                flow.fetch_token(code=auth_code)
+                creds = flow.credentials
+                with open('token.json', 'w') as token:
+                    token.write(creds.to_json())
     return build('gmail', 'v1', credentials=creds)
 
 @st.cache_resource
