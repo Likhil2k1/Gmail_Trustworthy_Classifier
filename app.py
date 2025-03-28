@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import base64
 import re
 import nltk
 from collections import defaultdict
@@ -13,8 +14,28 @@ nltk.download('punkt')
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+# Base64 encoded credentials string (replace this with your actual Base64 string)
+encoded_credentials = """
+eyJpbnN0YWxsZWQiOnsiY2xpZW50X2lkIjoiMTQ1NjQzMzM2NjY0LWFvb2M2b3Qz
+dHAzdTJzdjVjbWlybm85anBybmRnZzBpLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQu
+Y29tIiwicHJvamVjdF9pZCI6ImdtYWlsdHJ1c3RhcHBmaW5hbCIsImF1dGhfdXJp
+IjoiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tL28vb2F1dGgyL2F1dGgiLCJ0
+b2tlbl91cmkiOiJodHRwczovL29hdXRoMi5nb29nbGVhcGlzLmNvbS90b2tlbiIs
+ImF1dGhfcHJvdmlkZXJfeDUwOV9jZXJ0X3VybCI6Imh0dHBzOi8vd3d3Lmdvb2ds
+ZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsImNsaWVudF9zZWNyZXQiOiJHT0NT
+UFgtTXhBUEFEbEtYRmZwUnJ5bHpXNWFtbmROdEdoNiIsInJlZGlyZWN0X3VyaXMi
+OlsiaHR0cDovL2xvY2FsaG9zdCJdfX0=
+"""
+
+# Decode the Base64 credentials and write to a file
+credentials_json = base64.b64decode(encoded_credentials).decode('utf-8')
+
+# Write the credentials to a file
+with open('credentials.json', 'w') as f:
+    f.write(credentials_json)
+
 @st.cache_resource
-def gmail_authenticate(credentials_file='credentials.json'):
+def gmail_authenticate():
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -22,7 +43,7 @@ def gmail_authenticate(credentials_file='credentials.json'):
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=8765)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
@@ -52,7 +73,6 @@ def extract_email_content(service, max_results=10):
                 body = part.get('body', {}).get('data', '')
                 break
         try:
-            import base64
             body = base64.urlsafe_b64decode(body).decode('utf-8')
         except:
             body = ''
@@ -88,14 +108,13 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 
     return sender_scores
 
-# UI Start
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
-credentials_file = st.file_uploader("Upload your credentials.json", type=["json"])
+credentials_file = 'credentials.json'  # We don't need to upload file now
 
-if credentials_file is not None:
-    service = gmail_authenticate(credentials_file=credentials_file)
+if os.path.exists(credentials_file):
+    service = gmail_authenticate()
     classifier = load_model()
     tokenizer = load_tokenizer()
 
@@ -116,4 +135,4 @@ if credentials_file is not None:
                 st.markdown(f"- ✉️ **{entry['subject']}** → _{entry['sentiment']}_ (Score: {entry['score']})")
             st.markdown("---")
 else:
-    st.warning("Please upload your `credentials.json` file to get started.")
+    st.warning("`credentials.json` file not found.")
