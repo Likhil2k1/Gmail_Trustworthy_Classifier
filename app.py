@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import base64
 import re
 import nltk
 from collections import defaultdict
@@ -9,44 +8,35 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from transformers import pipeline, AutoTokenizer
+import base64
+import json
 
 nltk.download('punkt')
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-# Base64 encoded credentials string (replace this with your actual Base64 string)
-encoded_credentials = """
-eyJpbnN0YWxsZWQiOnsiY2xpZW50X2lkIjoiMTQ1NjQzMzM2NjY0LWFvb2M2b3Qz
-dHAzdTJzdjVjbWlybm85anBybmRnZzBpLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQu
-Y29tIiwicHJvamVjdF9pZCI6ImdtYWlsdHJ1c3RhcHBmaW5hbCIsImF1dGhfdXJp
-IjoiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tL28vb2F1dGgyL2F1dGgiLCJ0
-b2tlbl91cmkiOiJodHRwczovL29hdXRoMi5nb29nbGVhcGlzLmNvbS90b2tlbiIs
-ImF1dGhfcHJvdmlkZXJfeDUwOV9jZXJ0X3VybCI6Imh0dHBzOi8vd3d3Lmdvb2ds
-ZWFwaXMuY29tL29hdXRoMi92MS9jZXJ0cyIsImNsaWVudF9zZWNyZXQiOiJHT0NT
-UFgtTXhBUEFEbEtYRmZwUnJ5bHpXNWFtbmROdEdoNiIsInJlZGlyZWN0X3VyaXMi
-OlsiaHR0cDovL2xvY2FsaG9zdCJdfX0=
-"""
-
-# Decode the Base64 credentials and write to a file
-credentials_json = base64.b64decode(encoded_credentials).decode('utf-8')
-
-# Write the credentials to a file
-with open('credentials.json', 'w') as f:
-    f.write(credentials_json)
+def decode_credentials_from_base64(b64_string):
+    decoded_data = base64.b64decode(b64_string).decode('utf-8')
+    return json.loads(decoded_data)
 
 @st.cache_resource
 def gmail_authenticate():
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=8765)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+    credentials_b64 = os.getenv('CREDENTIALS_B64')
+    if credentials_b64:
+        credentials = decode_credentials_from_base64(credentials_b64)
+        creds = Credentials.from_authorized_user_info(credentials, SCOPES)
+    else:
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=8765)
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
     return build('gmail', 'v1', credentials=creds)
 
 @st.cache_resource
@@ -111,28 +101,23 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
-credentials_file = 'credentials.json'  # We don't need to upload file now
+service = gmail_authenticate()
+classifier = load_model()
+tokenizer = load_tokenizer()
 
-if os.path.exists(credentials_file):
-    service = gmail_authenticate()
-    classifier = load_model()
-    tokenizer = load_tokenizer()
+keyword_weights = {
+    'positive': {'thank': 1, 'reliable': 2, 'trust': 2, 'great': 1, 'help': 1, 'appreciate': 1, 'excellent': 2},
+    'negative': {'sorry': -1, 'delay': -1, 'fail': -2, 'issue': -1, 'problem': -1, 'mistake': -2, 'apologies': -1}
+}
 
-    keyword_weights = {
-        'positive': {'thank': 1, 'reliable': 2, 'trust': 2, 'great': 1, 'help': 1, 'appreciate': 1, 'excellent': 2},
-        'negative': {'sorry': -1, 'delay': -1, 'fail': -2, 'issue': -1, 'problem': -1, 'mistake': -2, 'apologies': -1}
-    }
+if st.button("📥 Analyze My Inbox"):
+    emails = extract_email_content(service)
+    results = compute_trust_scores(emails, classifier, tokenizer, keyword_weights)
 
-    if st.button("📥 Analyze My Inbox"):
-        emails = extract_email_content(service)
-        results = compute_trust_scores(emails, classifier, tokenizer, keyword_weights)
-
-        for sender, entries in results.items():
-            avg_score = round(sum(e['score'] for e in entries) / len(entries), 3)
-            st.subheader(sender)
-            st.markdown(f"**Average Trust Score**: {avg_score}")
-            for entry in entries:
-                st.markdown(f"- ✉️ **{entry['subject']}** → _{entry['sentiment']}_ (Score: {entry['score']})")
-            st.markdown("---")
-else:
-    st.warning("`credentials.json` file not found.")
+    for sender, entries in results.items():
+        avg_score = round(sum(e['score'] for e in entries) / len(entries), 3)
+        st.subheader(sender)
+        st.markdown(f"**Average Trust Score**: {avg_score}")
+        for entry in entries:
+            st.markdown(f"- ✉️ **{entry['subject']}** → _{entry['sentiment']}_ (Score: {entry['score']})")
+        st.markdown("---")
