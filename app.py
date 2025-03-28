@@ -8,38 +8,52 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from transformers import pipeline, AutoTokenizer
+import base64
 
+# Download NLTK resources
 nltk.download('punkt')
 
+# Define the API scope
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+# Function to decode base64 credentials and save as JSON
+def decode_credentials():
+    base64_credentials = os.getenv('GOOGLE_CREDENTIALS_B64')
+    credentials_json = base64.b64decode(base64_credentials).decode('utf-8')
+    with open("credentials.json", "w") as json_file:
+        json_file.write(credentials_json)
+
+# Function to authenticate and get credentials
 @st.cache_resource
 def gmail_authenticate():
     creds = None
-    credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS', 'credentials.json')
-
-    if os.path.exists(credentials_path):
-        creds = Credentials.from_authorized_user_file(credentials_path, SCOPES)
+    decode_credentials()  # Decode the credentials before using them
+    
+    if os.path.exists('credentials.json'):
+        creds = Credentials.from_authorized_user_file('credentials.json', SCOPES)
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=8765)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
     
     return build('gmail', 'v1', credentials=creds)
 
+# Function to load the sentiment analysis model
 @st.cache_resource
 def load_model():
     return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
+# Function to load the tokenizer
 @st.cache_resource
 def load_tokenizer():
     return AutoTokenizer.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
 
+# Function to extract email content
 def extract_email_content(service, max_results=10):
     emails = []
     results = service.users().messages().list(userId='me', maxResults=max_results).execute()
@@ -69,6 +83,7 @@ def extract_email_content(service, max_results=10):
     
     return emails
 
+# Function to compute trust scores
 def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
     sender_scores = defaultdict(list)
     
@@ -100,13 +115,16 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 
     return sender_scores
 
+# Streamlit UI
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
+# Initialize services
 service = gmail_authenticate()
 classifier = load_model()
 tokenizer = load_tokenizer()
 
+# Define keywords for scoring
 keyword_weights = {
     'positive': {'thank': 1, 'reliable': 2, 'trust': 2, 'great': 1, 'help': 1, 'appreciate': 1, 'excellent': 2},
     'negative': {'sorry': -1, 'delay': -1, 'fail': -2, 'issue': -1, 'problem': -1, 'mistake': -2, 'apologies': -1}
