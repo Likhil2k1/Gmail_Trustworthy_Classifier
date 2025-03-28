@@ -1,37 +1,45 @@
 import streamlit as st
+import base64
 import os
 import re
-import nltk
+import json
 from collections import defaultdict
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from transformers import pipeline, AutoTokenizer
-import base64
-
-nltk.download('punkt')
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 @st.cache_resource
 def gmail_authenticate():
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    # Check if the token is available in the environment
+    if os.getenv('GOOGLE_CREDENTIALS_B64'):
+        decoded_credentials = base64.b64decode(os.getenv('GOOGLE_CREDENTIALS_B64')).decode('utf-8')
+        creds = Credentials.from_authorized_user_info(info=json.loads(decoded_credentials), scopes=SCOPES)
+    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Generate the authorization URL for manual user input
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             auth_url, _ = flow.authorization_url(prompt='consent')
-            st.write(f"Please visit this URL to authorize the application: [Authorize]( {auth_url} )")
+            st.write(f"Please click the link below to authorize:")
+            st.markdown(f"[Authorize Link]({auth_url})")
+            
+            # User is asked to manually enter the authorization code
             auth_code = st.text_input("Enter the authorization code here:")
+            
             if auth_code:
+                # Fetch the token after entering the code
                 flow.fetch_token(code=auth_code)
                 creds = flow.credentials
                 with open('token.json', 'w') as token:
                     token.write(creds.to_json())
+
     return build('gmail', 'v1', credentials=creds)
 
 @st.cache_resource
@@ -93,6 +101,7 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 
     return sender_scores
 
+# UI Start
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
