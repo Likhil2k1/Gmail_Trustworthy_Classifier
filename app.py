@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import base64
 import re
 import nltk
 from collections import defaultdict
@@ -14,27 +13,17 @@ nltk.download('punkt')
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-def decode_base64_credentials(b64_credentials):
-    credentials_json = base64.b64decode(b64_credentials).decode('utf-8')
-    with open('credentials.json', 'w') as f:
-        f.write(credentials_json)
-
 @st.cache_resource
-def gmail_authenticate():
+def gmail_authenticate(credentials_file='credentials.json'):
     creds = None
-    b64_credentials = os.getenv('GOOGLE_CREDENTIALS_B64')
-
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            decode_base64_credentials(b64_credentials)
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=8765)
-
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
     return build('gmail', 'v1', credentials=creds)
@@ -63,6 +52,7 @@ def extract_email_content(service, max_results=10):
                 body = part.get('body', {}).get('data', '')
                 break
         try:
+            import base64
             body = base64.urlsafe_b64decode(body).decode('utf-8')
         except:
             body = ''
@@ -87,7 +77,7 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
         )
         keyword_score = min(max(keyword_score / 10, -1), 1)
 
-        response_score = 0.5
+        response_score = 0.5  # placeholder
         final_score = 0.5 * sentiment_score + 0.3 * keyword_score + 0.2 * response_score
 
         sender_scores[sender].append({
@@ -98,26 +88,32 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 
     return sender_scores
 
+# UI Start
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
-service = gmail_authenticate()
-classifier = load_model()
-tokenizer = load_tokenizer()
+credentials_file = st.file_uploader("Upload your credentials.json", type=["json"])
 
-keyword_weights = {
-    'positive': {'thank': 1, 'reliable': 2, 'trust': 2, 'great': 1, 'help': 1, 'appreciate': 1, 'excellent': 2},
-    'negative': {'sorry': -1, 'delay': -1, 'fail': -2, 'issue': -1, 'problem': -1, 'mistake': -2, 'apologies': -1}
-}
+if credentials_file is not None:
+    service = gmail_authenticate(credentials_file=credentials_file)
+    classifier = load_model()
+    tokenizer = load_tokenizer()
 
-if st.button("📥 Analyze My Inbox"):
-    emails = extract_email_content(service)
-    results = compute_trust_scores(emails, classifier, tokenizer, keyword_weights)
+    keyword_weights = {
+        'positive': {'thank': 1, 'reliable': 2, 'trust': 2, 'great': 1, 'help': 1, 'appreciate': 1, 'excellent': 2},
+        'negative': {'sorry': -1, 'delay': -1, 'fail': -2, 'issue': -1, 'problem': -1, 'mistake': -2, 'apologies': -1}
+    }
 
-    for sender, entries in results.items():
-        avg_score = round(sum(e['score'] for e in entries) / len(entries), 3)
-        st.subheader(sender)
-        st.markdown(f"**Average Trust Score**: {avg_score}")
-        for entry in entries:
-            st.markdown(f"- ✉️ **{entry['subject']}** → _{entry['sentiment']}_ (Score: {entry['score']})")
-        st.markdown("---")
+    if st.button("📥 Analyze My Inbox"):
+        emails = extract_email_content(service)
+        results = compute_trust_scores(emails, classifier, tokenizer, keyword_weights)
+
+        for sender, entries in results.items():
+            avg_score = round(sum(e['score'] for e in entries) / len(entries), 3)
+            st.subheader(sender)
+            st.markdown(f"**Average Trust Score**: {avg_score}")
+            for entry in entries:
+                st.markdown(f"- ✉️ **{entry['subject']}** → _{entry['sentiment']}_ (Score: {entry['score']})")
+            st.markdown("---")
+else:
+    st.warning("Please upload your `credentials.json` file to get started.")
