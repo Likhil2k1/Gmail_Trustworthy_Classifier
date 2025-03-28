@@ -1,8 +1,6 @@
-streamlit
-google-auth
-google-auth-oauthlib
-google-api-python-client
-transformers
-nltk
-google-auth-httplib2
-requests
+google-auth==2.0.0
+google-auth-oauthlib==0.4.6
+google-api-python-client==2.40.0
+streamlit==1.10.0
+transformers==4.18.0
+nltk==3.7
