@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import base64
 import re
 import nltk
 from collections import defaultdict
@@ -8,89 +9,71 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from transformers import pipeline, AutoTokenizer
-import base64
 
-# Download NLTK resources
 nltk.download('punkt')
 
-# Define the API scope
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-# Function to decode base64 credentials and save as JSON
-def decode_credentials():
-    base64_credentials = os.getenv('GOOGLE_CREDENTIALS_B64')
-    credentials_json = base64.b64decode(base64_credentials).decode('utf-8')
-    with open("credentials.json", "w") as json_file:
-        json_file.write(credentials_json)
+def decode_base64_credentials(b64_credentials):
+    credentials_json = base64.b64decode(b64_credentials).decode('utf-8')
+    with open('credentials.json', 'w') as f:
+        f.write(credentials_json)
 
-# Function to authenticate and get credentials
 @st.cache_resource
 def gmail_authenticate():
     creds = None
-    decode_credentials()  # Decode the credentials before using them
-    
-    if os.path.exists('credentials.json'):
-        creds = Credentials.from_authorized_user_file('credentials.json', SCOPES)
+    b64_credentials = os.getenv('GOOGLE_CREDENTIALS_B64')
+
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            decode_base64_credentials(b64_credentials)
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=8765)
+
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
-    
     return build('gmail', 'v1', credentials=creds)
 
-# Function to load the sentiment analysis model
 @st.cache_resource
 def load_model():
     return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
-# Function to load the tokenizer
 @st.cache_resource
 def load_tokenizer():
     return AutoTokenizer.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
 
-# Function to extract email content
 def extract_email_content(service, max_results=10):
     emails = []
     results = service.users().messages().list(userId='me', maxResults=max_results).execute()
     messages = results.get('messages', [])
-    
     for msg in messages:
         msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
         headers = msg_data['payload'].get('headers', [])
-        
         subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
         sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
         parts = msg_data['payload'].get('parts', [])
-        
         body = ''
         for part in parts:
             if part.get('mimeType') == 'text/plain':
                 body = part.get('body', {}).get('data', '')
                 break
-        
         try:
-            import base64
             body = base64.urlsafe_b64decode(body).decode('utf-8')
         except:
             body = ''
-        
         emails.append({'sender': sender, 'subject': subject, 'content': body})
-    
     return emails
 
-# Function to compute trust scores
 def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
     sender_scores = defaultdict(list)
-    
     for email in emails:
         sender = email['sender']
         text = email['content']
-        
         tokens = tokenizer.encode(text, truncation=True, max_length=512)
         truncated_text = tokenizer.decode(tokens, skip_special_tokens=True)
 
@@ -115,16 +98,13 @@ def compute_trust_scores(emails, classifier, tokenizer, keyword_weights):
 
     return sender_scores
 
-# Streamlit UI
 st.title("📬 Gmail Trust Classifier")
 st.write("This app analyzes the sentiment and content of your Gmail emails and ranks senders by trust.")
 
-# Initialize services
 service = gmail_authenticate()
 classifier = load_model()
 tokenizer = load_tokenizer()
 
-# Define keywords for scoring
 keyword_weights = {
     'positive': {'thank': 1, 'reliable': 2, 'trust': 2, 'great': 1, 'help': 1, 'appreciate': 1, 'excellent': 2},
     'negative': {'sorry': -1, 'delay': -1, 'fail': -2, 'issue': -1, 'problem': -1, 'mistake': -2, 'apologies': -1}
